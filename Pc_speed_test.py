@@ -8,6 +8,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -34,8 +35,32 @@ try:
 except ImportError:  # pragma: no cover - fallback path is intentional
     psutil = None
 
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+except ImportError:  # pragma: no cover - optional export path
+    colors = None
+    A4 = None
+    ParagraphStyle = None
+    getSampleStyleSheet = None
+    Paragraph = None
+    SimpleDocTemplate = None
+    Spacer = None
+    Table = None
+    TableStyle = None
+
 
 AUTO_REFRESH_MS = 3000
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
+REPORT_DIR = OUTPUT_DIR / "reports"
+PDF_DIR = OUTPUT_DIR / "pdf"
+HISTORY_DIR = OUTPUT_DIR / "history"
+BUILD_DIR = BASE_DIR / "build"
+HISTORY_FILE = HISTORY_DIR / "benchmark_history.json"
+MAX_BENCHMARK_HISTORY = 100
 
 
 @dataclass
@@ -47,6 +72,22 @@ class Benchmarks:
     disk_read_mb_s: float | None
     file_ops_per_sec: float | None
     tcp_latency_ms: float | None
+
+
+def ensure_output_dirs() -> None:
+    for path in (OUTPUT_DIR, REPORT_DIR, PDF_DIR, HISTORY_DIR):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def safe_slug(text: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", text.strip())
+    return cleaned.strip("_") or "pc_speed_test"
+
+
+def default_report_stem(info: dict[str, Any]) -> str:
+    hostname = safe_slug(info.get("hostname", "host"))
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"pc_speed_test_{hostname}_{timestamp}"
 
 
 def run_command(cmd: list[str]) -> str:
@@ -293,6 +334,79 @@ def gather_basic_info() -> dict[str, Any]:
     return info
 
 
+def gather_top_processes(limit: int = 5) -> list[dict[str, Any]]:
+    if not psutil:
+        return []
+
+    processes: list[dict[str, Any]] = []
+    try:
+        process_iter = psutil.process_iter(["pid", "name", "memory_info"])
+    except Exception:
+        return processes
+
+    try:
+        for process in process_iter:
+            try:
+                cpu_percent = process.cpu_percent(interval=None)
+                name = process.info.get("name") or f"PID {process.pid}"
+                memory_info = process.info.get("memory_info")
+                rss = int(memory_info.rss) if memory_info else 0
+                processes.append(
+                    {
+                        "pid": process.pid,
+                        "name": name,
+                        "cpu_percent": round(float(cpu_percent), 2),
+                        "memory_rss": rss,
+                    }
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, AttributeError):
+                continue
+            except Exception:
+                continue
+    except Exception:
+        return []
+
+    processes.sort(key=lambda item: (item["cpu_percent"], item["memory_rss"]), reverse=True)
+    return processes[:limit]
+
+
+def load_benchmark_history() -> list[dict[str, Any]]:
+    ensure_output_dirs()
+    if not HISTORY_FILE.exists():
+        return []
+    try:
+        raw = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def append_benchmark_history(info: dict[str, Any], benchmarks: Benchmarks) -> list[dict[str, Any]]:
+    if benchmarks.cpu_loop_seconds is None:
+        return load_benchmark_history()
+
+    history = load_benchmark_history()
+    entry = {
+        "timestamp": info.get("timestamp"),
+        "hostname": info.get("hostname"),
+        "cpu_loop_ops_per_sec": benchmarks.cpu_loop_ops_per_sec,
+        "memory_copy_mb_s": benchmarks.memory_copy_mb_s,
+        "disk_write_mb_s": benchmarks.disk_write_mb_s,
+        "disk_read_mb_s": benchmarks.disk_read_mb_s,
+        "file_ops_per_sec": benchmarks.file_ops_per_sec,
+        "tcp_latency_ms": benchmarks.tcp_latency_ms,
+    }
+    history.append(entry)
+    history = history[-MAX_BENCHMARK_HISTORY:]
+    try:
+        HISTORY_FILE.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return history
+
+
 def run_cpu_benchmark(duration: float = 1.5) -> tuple[float, float]:
     iterations = 0
     start = time.perf_counter()
@@ -475,6 +589,16 @@ def render_text_report(info: dict[str, Any], benchmarks: Benchmarks) -> str:
             lines.append(battery_line)
         lines.append("")
 
+    top_processes = info.get("top_processes", [])
+    if top_processes:
+        lines.append("[TOP PROCESSES]")
+        for process in top_processes:
+            lines.append(
+                f"{process['name']} (PID {process['pid']}): "
+                f"CPU {process['cpu_percent']}% | RAM {human_bytes(process['memory_rss'])}"
+            )
+        lines.append("")
+
     lines.append("[BENCHMARK]")
     if benchmarks.cpu_loop_seconds is None:
         lines.append("Skipped. Run with --benchmark to execute active speed tests.")
@@ -496,7 +620,134 @@ def render_text_report(info: dict[str, Any], benchmarks: Benchmarks) -> str:
         lines.append("")
         lines.append("Note: install 'psutil' for deeper metrics: pip install psutil")
 
+    history = info.get("benchmark_history", [])
+    if history:
+        latest = history[-1]
+        lines.append("")
+        lines.append("[HISTORY]")
+        lines.append(f"Saved Runs: {len(history)}")
+        lines.append(f"Last Saved Run: {latest.get('timestamp', 'Unknown')}")
+
     return "\n".join(lines)
+
+
+def build_report_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    report = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "info": payload["info"],
+        "benchmarks": payload["benchmarks"],
+    }
+    return report
+
+
+def export_report_json(payload: dict[str, Any], path: Path) -> Path:
+    ensure_output_dirs()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report = build_report_payload(payload)
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def export_report_text(payload: dict[str, Any], path: Path) -> Path:
+    ensure_output_dirs()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    info = payload["info"]
+    benchmarks = Benchmarks(**payload["benchmarks"])
+    body = render_text_report(info, benchmarks)
+    path.write_text(body + "\n", encoding="utf-8")
+    return path
+
+
+def export_report_pdf(payload: dict[str, Any], path: Path) -> Path:
+    if SimpleDocTemplate is None or Table is None or TableStyle is None or A4 is None:
+        raise RuntimeError("PDF export requires reportlab. Install with: python3 -m pip install reportlab")
+
+    ensure_output_dirs()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(str(path), pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ReportTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        spaceAfter=12,
+        textColor=colors.HexColor("#122033"),
+    )
+    section_style = ParagraphStyle(
+        "SectionTitle",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        spaceBefore=8,
+        spaceAfter=6,
+        textColor=colors.HexColor("#0ea5e9"),
+    )
+    body_style = styles["BodyText"]
+    body_style.fontName = "Helvetica"
+    body_style.fontSize = 9
+    body_style.leading = 12
+
+    info = payload["info"]
+    benchmarks = Benchmarks(**payload["benchmarks"])
+    story: list[Any] = [
+        Paragraph("PC Speed Test Report", title_style),
+        Paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}", body_style),
+        Spacer(1, 8),
+    ]
+
+    sections = build_sections(info, benchmarks)
+    for title, rows in sections:
+        story.append(Paragraph(title, section_style))
+        table_data = [[str(key), str(value)] for key, value in rows]
+        table = Table(table_data, colWidths=[150, 340])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+                    ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.whitesmoke, colors.HexColor("#eef6fb")]),
+                    ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#122033")),
+                    ("TEXTCOLOR", (1, 0), (1, -1), colors.HexColor("#243b53")),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d6e2ee")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 8))
+
+    doc.build(story)
+    return path
+
+
+def export_report(payload: dict[str, Any], fmt: str = "pdf", base_path: Path | None = None) -> Path:
+    ensure_output_dirs()
+    info = payload["info"]
+    stem = default_report_stem(info)
+    if base_path is None:
+        if fmt == "pdf":
+            base_path = PDF_DIR / f"{stem}.pdf"
+        elif fmt == "json":
+            base_path = REPORT_DIR / f"{stem}.json"
+        else:
+            base_path = REPORT_DIR / f"{stem}.txt"
+
+    fmt = fmt.lower()
+    if fmt == "json":
+        return export_report_json(payload, base_path)
+    if fmt == "txt":
+        return export_report_text(payload, base_path)
+    if fmt == "pdf":
+        return export_report_pdf(payload, base_path)
+    raise ValueError(f"Unsupported report format: {fmt}")
 
 
 def build_sections(info: dict[str, Any], benchmarks: Benchmarks) -> list[tuple[str, list[tuple[str, str]]]]:
@@ -611,6 +862,34 @@ def build_sections(info: dict[str, Any], benchmarks: Benchmarks) -> list[tuple[s
             (
                 "Notes",
                 [("Optional", "Install psutil for deeper live metrics when network is available.")],
+            )
+        )
+
+    top_processes = info.get("top_processes", [])
+    if top_processes:
+        process_rows = [
+            (
+                f"{item['name']} (PID {item['pid']})",
+                f"CPU {item['cpu_percent']}% | RAM {human_bytes(item['memory_rss'])}",
+            )
+            for item in top_processes
+        ]
+        sections.append(("Top Processes", process_rows))
+
+    history = info.get("benchmark_history", [])
+    if history:
+        latest = history[-1]
+        sections.append(
+            (
+                "History",
+                [
+                    ("Saved Runs", str(len(history))),
+                    ("Last Run", str(latest.get("timestamp", "Unknown"))),
+                    (
+                        "Last CPU",
+                        f"{latest.get('cpu_loop_ops_per_sec', 'N/A')} ops/s",
+                    ),
+                ],
             )
         )
 
@@ -880,6 +1159,7 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
     memory_history: list[float] = []
     refresh_in_progress = False
     auto_refresh_job: str | None = None
+    latest_payload: dict[str, Any] | None = None
 
     def render_disk_panel(
         panel_body: ttk.Frame,
@@ -1328,6 +1608,8 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
         render_key_value_rows(details, rows)
 
     def render_payload(payload: dict[str, Any]) -> None:
+        nonlocal latest_payload
+        latest_payload = payload
         current_scroll = content_canvas.yview()
         top_pixel = max(content_canvas.canvasy(0), 0.0)
         for frame in panel_frames:
@@ -1424,6 +1706,48 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
             f"Last update: {info['timestamp']} | psutil: {'yes' if payload['psutil_available'] else 'no'}"
         )
 
+    def export_report_from_gui() -> None:
+        if filedialog is None or messagebox is None:
+            status_var.set("Report export dialogs are unavailable in this environment.")
+            return
+        if latest_payload is None:
+            status_var.set("No data available yet. Refresh once before exporting.")
+            return
+
+        target = filedialog.asksaveasfilename(
+            title="Export PC Speed Test Report",
+            defaultextension=".pdf",
+            initialfile=f"{default_report_stem(latest_payload['info'])}.pdf",
+            filetypes=[
+                ("PDF report", "*.pdf"),
+                ("Text report", "*.txt"),
+                ("JSON report", "*.json"),
+            ],
+        )
+        if not target:
+            return
+
+        target_path = Path(target)
+        suffix = target_path.suffix.lower()
+        if suffix == ".txt":
+            fmt = "txt"
+        elif suffix == ".json":
+            fmt = "json"
+        else:
+            fmt = "pdf"
+            if suffix != ".pdf":
+                target_path = target_path.with_suffix(".pdf")
+
+        try:
+            saved_path = export_report(latest_payload, fmt=fmt, base_path=target_path)
+        except Exception as exc:
+            status_var.set("Failed to export report.")
+            messagebox.showerror("Export Failed", str(exc))
+            return
+
+        status_var.set(f"Report exported: {saved_path}")
+        messagebox.showinfo("Report Exported", f"Saved to:\n{saved_path}")
+
     def load_payload(include_benchmark: bool) -> None:
         nonlocal refresh_in_progress
         if refresh_in_progress:
@@ -1482,10 +1806,16 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
     ).grid(row=0, column=1, padx=(0, 10))
     ttk.Button(
         controls,
+        text="Export Report",
+        style="Secondary.TButton",
+        command=export_report_from_gui,
+    ).grid(row=0, column=2, padx=(0, 10))
+    ttk.Button(
+        controls,
         text="Run Benchmark",
         style="Primary.TButton",
         command=lambda: load_payload(True),
-    ).grid(row=0, column=2)
+    ).grid(row=0, column=3)
 
     if run_benchmark_on_start:
         load_payload(True)
@@ -1497,8 +1827,14 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
 
 
 def build_output(include_benchmark: bool) -> dict[str, Any]:
+    ensure_output_dirs()
     info = gather_basic_info()
+    info["top_processes"] = gather_top_processes()
     benchmarks = gather_benchmarks(include_benchmark)
+    if include_benchmark and benchmarks.cpu_loop_seconds is not None:
+        info["benchmark_history"] = append_benchmark_history(info, benchmarks)
+    else:
+        info["benchmark_history"] = load_benchmark_history()
     return {
         "info": info,
         "benchmarks": asdict(benchmarks),
@@ -1535,6 +1871,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Open a desktop GUI dashboard with grouped panels.",
     )
+    parser.add_argument(
+        "--export-report",
+        action="store_true",
+        help="Export a report file after collecting data.",
+    )
+    parser.add_argument(
+        "--report-format",
+        choices=("pdf", "txt", "json"),
+        default="pdf",
+        help="Format used with --export-report. Default: pdf.",
+    )
     return parser.parse_args()
 
 
@@ -1543,6 +1890,14 @@ def main() -> int:
     if args.gui:
         return launch_gui(run_benchmark_on_start=args.benchmark)
     payload = build_output(include_benchmark=args.benchmark)
+    if args.export_report:
+        try:
+            exported = export_report(payload, fmt=args.report_format)
+            print(f"Report exported: {exported}")
+        except Exception as exc:
+            print(f"Report export failed: {exc}", file=sys.stderr)
+            if args.report_format == "pdf":
+                print("Tip: install reportlab or export with --report-format txt/json", file=sys.stderr)
     if args.json:
         print_json(payload)
     else:

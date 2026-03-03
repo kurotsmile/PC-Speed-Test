@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#07111b"/>
+      <stop offset="100%" stop-color="#0c1c2d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#45d0ff"/>
+      <stop offset="100%" stop-color="#40f2b0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="180" cy="120" r="150" fill="#45d0ff" opacity="0.10"/>
+  <circle cx="1030" cy="100" r="120" fill="#40f2b0" opacity="0.08"/>
+  <rect x="70" y="80" width="1060" height="470" rx="34" fill="#102031" opacity="0.92" stroke="#20384d"/>
+  <text x="120" y="190" fill="#45d0ff" font-family="Arial, sans-serif" font-size="28" font-weight="700">PC SPEED TEST</text>
+  <text x="120" y="280" fill="#edf7ff" font-family="Arial, sans-serif" font-size="74" font-weight="700">
+    System insights and
+  </text>
+  <text x="120" y="362" fill="#edf7ff" font-family="Arial, sans-serif" font-size="74" font-weight="700">
+    benchmark reporting
+  </text>
+  <text x="120" y="430" fill="#96b3ca" font-family="Arial, sans-serif" font-size="30">
+    Real-time dashboard. Deep hardware panels. Instant screenshots.
+  </text>
+  <rect x="760" y="170" width="270" height="44" rx="16" fill="url(#accent)" opacity="0.95"/>
+  <text x="895" y="199" text-anchor="middle" fill="#051018" font-family="Arial, sans-serif" font-size="22" font-weight="700">Live Charts</text>
+  <rect x="760" y="236" width="270" height="44" rx="16" fill="#173149" stroke="#2a4f6d"/>
+  <text x="895" y="265" text-anchor="middle" fill="#edf7ff" font-family="Arial, sans-serif" font-size="22" font-weight="700">Speed Tests</text>
+  <rect x="760" y="302" width="270" height="44" rx="16" fill="#173149" stroke="#2a4f6d"/>
+  <text x="895" y="331" text-anchor="middle" fill="#edf7ff" font-family="Arial, sans-serif" font-size="22" font-weight="700">Visual Panels</text>
+  <text x="120" y="500" fill="#edf7ff" font-family="Arial, sans-serif" font-size="26" font-weight="700">pcspeedtool.web.app</text>
+</svg>

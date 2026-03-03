@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PC Speed Test</title>
+    <meta
+      name="description"
+      content="PC Speed Test is a desktop system inspection and benchmark tool with a real-time dashboard, deep hardware panels, and screenshot capture."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://pcspeedtool.web.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PC Speed Test" />
+    <meta property="og:title" content="PC Speed Test" />
+    <meta
+      property="og:description"
+      content="A desktop tool for system inspection, speed tests, grouped hardware panels, and visual benchmark reporting."
+    />
+    <meta property="og:url" content="https://pcspeedtool.web.app/" />
+    <meta property="og:image" content="https://pcspeedtool.web.app/og-cover.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PC Speed Test" />
+    <meta
+      name="twitter:description"
+      content="A desktop tool for system inspection, speed tests, grouped hardware panels, and visual benchmark reporting."
+    />
+    <meta name="twitter:image" content="https://pcspeedtool.web.app/og-cover.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <nav class="topbar">
+          <div class="brand">
+            <span class="brand-mark">P</span>
+            <span class="brand-text">PC Speed Test</span>
+          </div>
+          <div class="top-actions">
+            <a class="ghost-link" href="#features">Features</a>
+            <a class="ghost-link" href="#dashboard">Dashboard</a>
+            <a class="ghost-link" href="#contact">Contact</a>
+            <a class="cta-link" href="https://pcspeedtool.web.app/" target="_blank" rel="noreferrer">Open Site</a>
+          </div>
+        </nav>
+
+        <section class="hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Desktop Benchmark Tool</p>
+            <h1>System insights, speed tests, and a visual control panel in one app.</h1>
+            <p class="hero-lead">
+              PC Speed Test is a Python desktop utility that inspects hardware, benchmarks core subsystems,
+              and presents results through grouped panels, live charts, and export-ready screenshots.
+            </p>
+            <div class="live-link-wrap">
+              <span class="signal-label">Live Site</span>
+              <a class="live-link" href="https://pcspeedtool.web.app/" target="_blank" rel="noreferrer">
+                https://pcspeedtool.web.app/
+              </a>
+            </div>
+            <div class="hero-actions">
+              <a class="primary-button" href="#features">Explore Features</a>
+              <a class="secondary-button" href="#contact">Contact Now</a>
+            </div>
+            <div class="download-actions">
+              <a class="download-button mac" href="#" aria-label="Download macOS version (placeholder)">
+                Download macOS
+              </a>
+              <a class="download-button windows" href="#" aria-label="Download Windows version (placeholder)">
+                Download Windows
+              </a>
+            </div>
+            <div class="signal-strip">
+              <div class="signal-card">
+                <span class="signal-label">Realtime View</span>
+                <span class="signal-value">Auto-refresh dashboard</span>
+              </div>
+              <div class="signal-card">
+                <span class="signal-label">Benchmarks</span>
+                <span class="signal-value">CPU, RAM, Disk, File Ops</span>
+              </div>
+              <div class="signal-card">
+                <span class="signal-label">Export</span>
+                <span class="signal-value">Instant PNG capture</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-visual" id="dashboard">
+            <div class="mock-window">
+              <div class="window-bar">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="dashboard-grid">
+                <section class="mock-panel wide">
+                  <div class="panel-head">
+                    <span>Overview</span>
+                    <span class="panel-badge">Live</span>
+                  </div>
+                  <div class="bar-stack">
+                    <div class="metric-bar cpu"><span>CPU Load</span><b>23%</b></div>
+                    <div class="metric-bar memory"><span>Memory Use</span><b>64%</b></div>
+                    <div class="metric-bar disk"><span>Disk Use</span><b>95%</b></div>
+                  </div>
+                </section>
+                <section class="mock-panel">
+                  <div class="panel-head">
+                    <span>Memory</span>
+                    <span class="panel-badge">Trend</span>
+                  </div>
+                  <div class="memory-chart" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                  </div>
+                </section>
+                <section class="mock-panel">
+                  <div class="panel-head">
+                    <span>Disk</span>
+                    <span class="panel-badge">Donut</span>
+                  </div>
+                  <div class="disk-ring">
+                    <div class="disk-core">
+                      <small>TOTAL</small>
+                      <strong>228 GB</strong>
+                    </div>
+                  </div>
+                </section>
+                <section class="mock-panel wide">
+                  <div class="panel-head">
+                    <span>Benchmark</span>
+                    <span class="panel-badge">On Demand</span>
+                  </div>
+                  <div class="benchmark-bars">
+                    <span style="height: 58%"></span>
+                    <span style="height: 72%"></span>
+                    <span style="height: 34%"></span>
+                    <span style="height: 82%"></span>
+                    <span style="height: 48%"></span>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </section>
+      </header>
+
+      <main>
+        <section class="feature-band" id="features">
+          <article class="feature-card">
+            <p class="feature-index">01</p>
+            <h2>Deep hardware visibility</h2>
+            <p>
+              Grouped panels present CPU, GPU, memory, disk, network, system uptime, and battery details
+              in a layout designed for fast scanning.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">02</p>
+            <h2>Meaningful visual feedback</h2>
+            <p>
+              Each panel uses a chart that matches the metric: gauges for CPU, line charts for memory,
+              donuts for disk, and bars for benchmark comparisons.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">03</p>
+            <h2>Fast reporting workflow</h2>
+            <p>
+              Capture the dashboard as an image, benchmark the machine on demand, and present the result
+              to stakeholders without extra tooling.
+            </p>
+          </article>
+        </section>
+
+        <section class="spec-layout">
+          <div class="spec-copy">
+            <p class="eyebrow">What It Tests</p>
+            <h2>Built for practical machine validation, not vanity benchmarks.</h2>
+            <p>
+              The desktop tool combines lightweight diagnostics with speed tests that reflect real machine
+              behavior during demos, support checks, and internal evaluations.
+            </p>
+            <ul class="spec-list">
+              <li>CPU loop throughput</li>
+              <li>Memory copy bandwidth</li>
+              <li>Disk read/write speed</li>
+              <li>File operation throughput</li>
+              <li>TCP connection latency</li>
+            </ul>
+          </div>
+
+          <div class="spec-board">
+            <div class="spec-metric">
+              <span class="metric-label">CPU</span>
+              <strong data-counter="15.4">0</strong>
+              <small>million ops/s</small>
+            </div>
+            <div class="spec-metric">
+              <span class="metric-label">Memory</span>
+              <strong data-counter="13.0">0</strong>
+              <small>GB/s copy rate</small>
+            </div>
+            <div class="spec-metric">
+              <span class="metric-label">Disk</span>
+              <strong data-counter="16469">0</strong>
+              <small>MB/s read peak</small>
+            </div>
+            <div class="spec-metric">
+              <span class="metric-label">Ops</span>
+              <strong data-counter="10632">0</strong>
+              <small>file ops per second</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="contact-card" id="contact">
+          <div class="contact-copy">
+            <p class="eyebrow">Contact</p>
+            <h2>Need a demo, product consultation, or a custom build?</h2>
+            <p>
+              Contact the project owner directly for collaboration, product walkthroughs, and tailored
+              versions of the PC Speed Test tool.
+            </p>
+          </div>
+          <div class="contact-grid">
+            <a class="contact-item" href="mailto:tranthienthanh93@gmail.com">
+              <span class="contact-label">Email</span>
+              <strong>tranthienthanh93@gmail.com</strong>
+            </a>
+            <a class="contact-item" href="tel:+840978651577">
+              <span class="contact-label">Phone</span>
+              <strong>+84 0978 651 577</strong>
+            </a>
+            <a class="contact-item" href="https://pcspeedtool.web.app/" target="_blank" rel="noreferrer">
+              <span class="contact-label">Website</span>
+              <strong>pcspeedtool.web.app</strong>
+            </a>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

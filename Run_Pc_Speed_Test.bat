@@ -39,6 +39,9 @@ if errorlevel 1 (
 
 exit /b 0
 
+REM Auto-close on error without pause
+exit /b %errorlevel%
+
 :find_python
 for %%C in ("py -3" "python" "python3") do (
   set "CANDIDATE=%%~C"
@@ -84,19 +87,25 @@ exit /b 0
 echo.
 echo Launching PC Speed Test GUI...
 
-start "" /B cmd /c call %PY_CMD% "%PY_SCRIPT%" --gui --benchmark > "%LOG_FILE%" 2>&1
-timeout /t 1 /nobreak >nul
-
 call %PY_CMD% -c "import tkinter" >nul 2>&1
 if errorlevel 1 (
   echo tkinter is not available. Falling back to terminal mode.
   call %PY_CMD% "%PY_SCRIPT%" --benchmark
-  exit /b 1
+  exit /b %errorlevel%
 )
 
+REM Run Python GUI without cmd window using VBScript
+set "TEMP_VBS=%TEMP%\launch_pc_speed_test.vbs"
+(
+  echo Set objShell = CreateObject("WScript.Shell"^)
+  echo strCommand = "%PY_CMD% ""%PY_SCRIPT%"" --gui --benchmark"
+  echo objShell.Run strCommand, 0, False
+) > "%TEMP_VBS%"
+
+cscript //nologo "%TEMP_VBS%"
+del /q "%TEMP_VBS%" >nul 2>&1
 exit /b 0
 
 :pause_exit
 echo.
-pause
 exit /b 1

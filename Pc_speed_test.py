@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -19,6 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from statistics import mean
 from typing import Any
 
 try:
@@ -39,13 +41,14 @@ try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 except ImportError:  # pragma: no cover - optional export path
     colors = None
     A4 = None
     ParagraphStyle = None
     getSampleStyleSheet = None
     Paragraph = None
+    Image = None
     SimpleDocTemplate = None
     Spacer = None
     Table = None
@@ -60,7 +63,19 @@ PDF_DIR = OUTPUT_DIR / "pdf"
 HISTORY_DIR = OUTPUT_DIR / "history"
 BUILD_DIR = BASE_DIR / "build"
 HISTORY_FILE = HISTORY_DIR / "benchmark_history.json"
+SNAPSHOT_FILE = HISTORY_DIR / "system_snapshots.json"
+ALERT_CONFIG_FILE = OUTPUT_DIR / "alert_thresholds.json"
+PLUGIN_DIR = BASE_DIR / "plugins"
 MAX_BENCHMARK_HISTORY = 100
+MAX_SNAPSHOT_HISTORY = 1500
+APP_VERSION = "1.3.0"
+DEFAULT_NETWORK_ENDPOINTS = ("1.1.1.1", "8.8.8.8", "google.com")
+DEFAULT_ALERT_THRESHOLDS = {
+    "memory_percent": 85.0,
+    "disk_percent": 90.0,
+    "cpu_percent": 90.0,
+    "cpu_hot_seconds": 20.0,
+}
 
 
 @dataclass
@@ -72,6 +87,11 @@ class Benchmarks:
     disk_read_mb_s: float | None
     file_ops_per_sec: float | None
     tcp_latency_ms: float | None
+    network_endpoints: list[dict[str, Any]] | None
+    dns_lookup_ms: float | None
+    network_jitter_ms: float | None
+    network_stability_score: float | None
+    plugin_results: list[dict[str, Any]] | None
 
 
 def ensure_output_dirs() -> None:
@@ -340,11 +360,17 @@ def gather_top_processes(limit: int = 5) -> list[dict[str, Any]]:
 
     processes: list[dict[str, Any]] = []
     try:
-        process_iter = psutil.process_iter(["pid", "name", "memory_info"])
+        process_iter = list(psutil.process_iter(["pid", "name", "memory_info"]))
     except Exception:
         return processes
 
     try:
+        for process in process_iter:
+            try:
+                process.cpu_percent(interval=None)
+            except Exception:
+                continue
+        time.sleep(0.08)
         for process in process_iter:
             try:
                 cpu_percent = process.cpu_percent(interval=None)
@@ -397,6 +423,9 @@ def append_benchmark_history(info: dict[str, Any], benchmarks: Benchmarks) -> li
         "disk_read_mb_s": benchmarks.disk_read_mb_s,
         "file_ops_per_sec": benchmarks.file_ops_per_sec,
         "tcp_latency_ms": benchmarks.tcp_latency_ms,
+        "dns_lookup_ms": benchmarks.dns_lookup_ms,
+        "network_jitter_ms": benchmarks.network_jitter_ms,
+        "network_stability_score": benchmarks.network_stability_score,
     }
     history.append(entry)
     history = history[-MAX_BENCHMARK_HISTORY:]
@@ -490,15 +519,416 @@ def run_tcp_latency_benchmark(
     return elapsed * 1000.0
 
 
+def ping_host(host: str, count: int = 3, timeout_seconds: float = 1.2) -> list[float]:
+    system = platform.system()
+    if system == "Windows":
+        cmd = ["ping", "-n", str(count), "-w", str(int(timeout_seconds * 1000)), host]
+    else:
+        timeout_flag = str(max(int(timeout_seconds), 1))
+        cmd = ["ping", "-c", str(count), "-W", timeout_flag, host]
+    output = run_command(cmd)
+    if not output:
+        return []
+    values = re.findall(r"time[=<]([0-9]*\.?[0-9]+)\s*ms", output, flags=re.IGNORECASE)
+    latencies: list[float] = []
+    for value in values:
+        try:
+            latencies.append(float(value))
+        except ValueError:
+            continue
+    return latencies
+
+
+def run_advanced_network_benchmark(endpoints: tuple[str, ...] = DEFAULT_NETWORK_ENDPOINTS) -> dict[str, Any]:
+    endpoint_results: list[dict[str, Any]] = []
+    all_latencies: list[float] = []
+    stable_count = 0
+
+    for endpoint in endpoints:
+        samples = ping_host(endpoint, count=3, timeout_seconds=1.2)
+        if samples:
+            avg_latency = mean(samples)
+            jitter = (max(samples) - min(samples)) if len(samples) > 1 else 0.0
+            reachable = True
+            all_latencies.extend(samples)
+            if avg_latency < 120 and jitter < 30:
+                stable_count += 1
+        else:
+            avg_latency = None
+            jitter = None
+            reachable = False
+        endpoint_results.append(
+            {
+                "endpoint": endpoint,
+                "reachable": reachable,
+                "avg_latency_ms": round(avg_latency, 2) if avg_latency is not None else None,
+                "jitter_ms": round(jitter, 2) if jitter is not None else None,
+                "samples": [round(sample, 2) for sample in samples],
+            }
+        )
+
+    dns_lookup_ms: float | None = None
+    dns_start = time.perf_counter()
+    try:
+        socket.getaddrinfo("www.google.com", 443)
+    except socket.gaierror:
+        dns_lookup_ms = None
+    else:
+        dns_lookup_ms = (time.perf_counter() - dns_start) * 1000.0
+
+    network_jitter_ms = None
+    if all_latencies:
+        network_jitter_ms = max(all_latencies) - min(all_latencies)
+
+    if endpoint_results:
+        stability_score = (stable_count / len(endpoint_results)) * 100.0
+    else:
+        stability_score = 0.0
+
+    return {
+        "network_endpoints": endpoint_results,
+        "dns_lookup_ms": round(dns_lookup_ms, 2) if dns_lookup_ms is not None else None,
+        "network_jitter_ms": round(network_jitter_ms, 2) if network_jitter_ms is not None else None,
+        "network_stability_score": round(stability_score, 2),
+    }
+
+
+def load_benchmark_plugins() -> list[Any]:
+    plugins: list[Any] = []
+    if not PLUGIN_DIR.exists() or not PLUGIN_DIR.is_dir():
+        return plugins
+
+    for path in sorted(PLUGIN_DIR.glob("*.py")):
+        module_name = f"pc_speed_plugin_{safe_slug(path.stem)}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, path)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:
+            continue
+        plugin_test = getattr(module, "run_test", None)
+        if callable(plugin_test):
+            plugins.append((path.stem, plugin_test))
+    return plugins
+
+
+def run_plugin_benchmarks() -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for plugin_name, plugin_test in load_benchmark_plugins():
+        start = time.perf_counter()
+        try:
+            raw_result = plugin_test()
+            elapsed = (time.perf_counter() - start) * 1000.0
+            result_payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
+            score_value = result_payload.get("score")
+            if isinstance(score_value, (int, float)):
+                score = max(0.0, min(float(score_value), 100.0))
+            else:
+                score = None
+            results.append(
+                {
+                    "name": plugin_name,
+                    "ok": True,
+                    "elapsed_ms": round(elapsed, 2),
+                    "score": score,
+                    "details": result_payload,
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "name": plugin_name,
+                    "ok": False,
+                    "elapsed_ms": round((time.perf_counter() - start) * 1000.0, 2),
+                    "error": str(exc),
+                }
+            )
+    return results
+
+
+def score_from_bounds(value: float | None, good: float, bad: float, reverse: bool = False) -> float:
+    if value is None:
+        return 0.0
+    if reverse:
+        if value <= good:
+            return 100.0
+        if value >= bad:
+            return 0.0
+        return round(100.0 * (bad - value) / (bad - good), 2)
+    if value >= good:
+        return 100.0
+    if value <= bad:
+        return 0.0
+    return round(100.0 * (value - bad) / (good - bad), 2)
+
+
+def compute_health_assessment(info: dict[str, Any], benchmarks: Benchmarks) -> dict[str, Any]:
+    cpu_usage = float(info.get("cpu", {}).get("usage_percent", 0.0))
+    mem_usage = float(info.get("memory", {}).get("usage_percent", 0.0)) if "memory" in info else None
+    disk_usage = float(info.get("disk", {}).get("usage_percent", 0.0))
+    net_latency = benchmarks.tcp_latency_ms
+    net_stability = benchmarks.network_stability_score
+
+    cpu_score = score_from_bounds(cpu_usage, good=25.0, bad=95.0, reverse=True)
+    memory_score = score_from_bounds(mem_usage, good=55.0, bad=95.0, reverse=True) if mem_usage is not None else 0.0
+    disk_score = score_from_bounds(disk_usage, good=50.0, bad=95.0, reverse=True)
+
+    latency_score = score_from_bounds(net_latency, good=20.0, bad=250.0, reverse=True)
+    stability_score = score_from_bounds(net_stability, good=90.0, bad=40.0)
+    network_score = round((latency_score * 0.6) + (stability_score * 0.4), 2)
+
+    plugin_scores = [
+        float(item["score"])
+        for item in (benchmarks.plugin_results or [])
+        if isinstance(item.get("score"), (int, float))
+    ]
+    plugin_score = round(mean(plugin_scores), 2) if plugin_scores else None
+
+    components = [cpu_score, memory_score, disk_score, network_score]
+    weight_total = 4.0
+    if plugin_score is not None:
+        components.append(plugin_score)
+        weight_total += 1.0
+    total_score = round(sum(components) / weight_total, 2)
+
+    recommendations: list[str] = []
+    if cpu_usage >= 85:
+        recommendations.append("CPU thường xuyên cao: đóng app nền nặng và kiểm tra tiến trình chạy nền.")
+    if mem_usage is not None and mem_usage >= 85:
+        recommendations.append("RAM gần đầy: giảm tab/app mở đồng thời hoặc nâng cấp RAM.")
+    if disk_usage >= 90:
+        recommendations.append("Disk gần đầy: dọn rác và giữ trống ít nhất 15-20% dung lượng.")
+    if benchmarks.tcp_latency_ms is not None and benchmarks.tcp_latency_ms > 120:
+        recommendations.append("Độ trễ mạng cao: ưu tiên kết nối dây hoặc kiểm tra router/Wi-Fi channel.")
+    if benchmarks.dns_lookup_ms is not None and benchmarks.dns_lookup_ms > 150:
+        recommendations.append("DNS phản hồi chậm: thử DNS 1.1.1.1 hoặc 8.8.8.8.")
+    if not recommendations:
+        recommendations.append("Hệ thống đang ổn định, duy trì monitor nền để phát hiện sớm bất thường.")
+
+    grade = "A"
+    if total_score < 85:
+        grade = "B"
+    if total_score < 70:
+        grade = "C"
+    if total_score < 55:
+        grade = "D"
+    if total_score < 40:
+        grade = "E"
+
+    return {
+        "total_score": total_score,
+        "grade": grade,
+        "category_scores": {
+            "cpu": round(cpu_score, 2),
+            "memory": round(memory_score, 2),
+            "disk": round(disk_score, 2),
+            "network": round(network_score, 2),
+            "plugin": plugin_score,
+        },
+        "recommendations": recommendations,
+    }
+
+
+def build_trend_snapshot(history: list[dict[str, Any]], latest_benchmarks: Benchmarks) -> dict[str, Any]:
+    points = [entry for entry in history if isinstance(entry, dict)]
+    if latest_benchmarks.cpu_loop_ops_per_sec is not None:
+        points = points[-MAX_BENCHMARK_HISTORY:]
+    if not points:
+        return {"today": {}, "week": {}, "month": {}, "degradation_flags": []}
+
+    def avg_for_days(days: int) -> dict[str, float]:
+        now = datetime.now()
+        filtered: list[dict[str, Any]] = []
+        for entry in points:
+            ts = entry.get("timestamp")
+            if not isinstance(ts, str):
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+            if (now - dt).days < days:
+                filtered.append(entry)
+
+        metrics = ("cpu_loop_ops_per_sec", "memory_copy_mb_s", "disk_read_mb_s", "disk_write_mb_s", "tcp_latency_ms")
+        result: dict[str, float] = {}
+        for metric in metrics:
+            values: list[float] = []
+            for item in filtered:
+                value = item.get(metric)
+                if isinstance(value, (int, float)):
+                    values.append(float(value))
+            if values:
+                result[metric] = round(mean(values), 2)
+        return result
+
+    today = avg_for_days(1)
+    week = avg_for_days(7)
+    month = avg_for_days(30)
+
+    degradation_flags: list[str] = []
+    if today.get("cpu_loop_ops_per_sec") and week.get("cpu_loop_ops_per_sec"):
+        if today["cpu_loop_ops_per_sec"] < week["cpu_loop_ops_per_sec"] * 0.9:
+            degradation_flags.append("CPU benchmark giảm >10% so với trung bình tuần.")
+    if today.get("disk_read_mb_s") and month.get("disk_read_mb_s"):
+        if today["disk_read_mb_s"] < month["disk_read_mb_s"] * 0.85:
+            degradation_flags.append("Disk read giảm >15% so với trung bình tháng.")
+    if today.get("tcp_latency_ms") and week.get("tcp_latency_ms"):
+        if today["tcp_latency_ms"] > week["tcp_latency_ms"] * 1.2:
+            degradation_flags.append("Độ trễ mạng tăng >20% so với trung bình tuần.")
+
+    return {
+        "today": today,
+        "week": week,
+        "month": month,
+        "degradation_flags": degradation_flags,
+    }
+
+
+def gather_smart_alerts(
+    info: dict[str, Any],
+    thresholds: dict[str, float] | None = None,
+    snapshots: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    t = dict(DEFAULT_ALERT_THRESHOLDS)
+    if thresholds:
+        t.update(thresholds)
+
+    alerts: list[dict[str, str]] = []
+    cpu_usage = float(info.get("cpu", {}).get("usage_percent", 0.0))
+    mem_usage = float(info.get("memory", {}).get("usage_percent", 0.0)) if "memory" in info else 0.0
+    disk_usage = float(info.get("disk", {}).get("usage_percent", 0.0))
+
+    if mem_usage >= t["memory_percent"]:
+        alerts.append(
+            {
+                "level": "warning",
+                "title": "RAM usage high",
+                "message": f"RAM đang ở {mem_usage:.1f}% (> {t['memory_percent']}%).",
+                "action": "Đóng ứng dụng ngốn RAM, giảm tab browser, hoặc nâng cấp RAM.",
+            }
+        )
+    if disk_usage >= t["disk_percent"]:
+        alerts.append(
+            {
+                "level": "critical",
+                "title": "Disk almost full",
+                "message": f"Dung lượng disk đã dùng {disk_usage:.1f}% (> {t['disk_percent']}%).",
+                "action": "Dọn cache/log/download và giữ trống tối thiểu 15-20%.",
+            }
+        )
+    if cpu_usage >= t["cpu_percent"]:
+        alerts.append(
+            {
+                "level": "warning",
+                "title": "CPU sustained high",
+                "message": f"CPU hiện {cpu_usage:.1f}% (ngưỡng {t['cpu_percent']}%).",
+                "action": "Mở panel Processes để xác định app gây tải và giảm workload.",
+            }
+        )
+    if snapshots and len(snapshots) >= 4:
+        recent = snapshots[-4:]
+        avg_cpu_recent = mean(float(item.get("cpu_percent", 0.0)) for item in recent)
+        if avg_cpu_recent >= t["cpu_percent"]:
+            alerts.append(
+                {
+                    "level": "critical",
+                    "title": "CPU hot in sustained window",
+                    "message": f"CPU trung bình 4 snapshot gần nhất {avg_cpu_recent:.1f}% vượt ngưỡng {t['cpu_percent']}%.",
+                    "action": "Giảm workload kéo dài, kiểm tra tản nhiệt/quạt và ứng dụng nền.",
+                }
+            )
+    if not alerts:
+        alerts.append(
+            {
+                "level": "info",
+                "title": "No critical alert",
+                "message": "Hệ thống chưa vượt ngưỡng cảnh báo cấu hình hiện tại.",
+                "action": "Tiếp tục monitor nền để ghi nhận xu hướng theo thời gian.",
+            }
+        )
+    return alerts
+
+
+def load_alert_thresholds() -> dict[str, float]:
+    if not ALERT_CONFIG_FILE.exists():
+        return dict(DEFAULT_ALERT_THRESHOLDS)
+    try:
+        payload = json.loads(ALERT_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(DEFAULT_ALERT_THRESHOLDS)
+    if not isinstance(payload, dict):
+        return dict(DEFAULT_ALERT_THRESHOLDS)
+    merged = dict(DEFAULT_ALERT_THRESHOLDS)
+    for key, value in payload.items():
+        if key in merged and isinstance(value, (int, float)):
+            merged[key] = float(value)
+    return merged
+
+
+def save_alert_thresholds(thresholds: dict[str, float]) -> None:
+    ensure_output_dirs()
+    try:
+        ALERT_CONFIG_FILE.write_text(json.dumps(thresholds, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_snapshots() -> list[dict[str, Any]]:
+    ensure_output_dirs()
+    if not SNAPSHOT_FILE.exists():
+        return []
+    try:
+        raw = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def append_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    snapshots = load_snapshots()
+    snapshots.append(snapshot)
+    snapshots = snapshots[-MAX_SNAPSHOT_HISTORY:]
+    try:
+        SNAPSHOT_FILE.write_text(json.dumps(snapshots, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return snapshots
+
+
+def detect_snapshot_anomalies(snapshots: list[dict[str, Any]]) -> list[str]:
+    if len(snapshots) < 8:
+        return []
+    recent = snapshots[-8:]
+    cpu_values = [float(item.get("cpu_percent", 0.0)) for item in recent]
+    mem_values = [float(item.get("memory_percent", 0.0)) for item in recent]
+    disk_values = [float(item.get("disk_percent", 0.0)) for item in recent]
+
+    anomalies: list[str] = []
+    if mean(cpu_values) > 85:
+        anomalies.append("CPU trung bình 8 snapshot gần nhất vượt 85%.")
+    if mean(mem_values) > 88:
+        anomalies.append("RAM trung bình 8 snapshot gần nhất vượt 88%.")
+    if disk_values and disk_values[-1] > 92:
+        anomalies.append("Disk usage vượt 92% ở snapshot gần nhất.")
+    return anomalies
+
+
 def gather_benchmarks(enable: bool) -> Benchmarks:
     if not enable:
-        return Benchmarks(None, None, None, None, None, None, None)
+        return Benchmarks(None, None, None, None, None, None, None, None, None, None, None, None)
 
     cpu_elapsed, cpu_ops = run_cpu_benchmark()
     memory_speed = run_memory_benchmark()
     disk_write, disk_read = run_disk_benchmark()
     file_ops = run_file_ops_benchmark()
     tcp_latency = run_tcp_latency_benchmark()
+    advanced_network = run_advanced_network_benchmark()
+    plugin_results = run_plugin_benchmarks()
     return Benchmarks(
         cpu_loop_seconds=round(cpu_elapsed, 3),
         cpu_loop_ops_per_sec=round(cpu_ops, 2),
@@ -507,6 +937,11 @@ def gather_benchmarks(enable: bool) -> Benchmarks:
         disk_read_mb_s=round(disk_read, 2),
         file_ops_per_sec=round(file_ops, 2),
         tcp_latency_ms=round(tcp_latency, 2) if tcp_latency is not None else None,
+        network_endpoints=advanced_network["network_endpoints"],
+        dns_lookup_ms=advanced_network["dns_lookup_ms"],
+        network_jitter_ms=advanced_network["network_jitter_ms"],
+        network_stability_score=advanced_network["network_stability_score"],
+        plugin_results=plugin_results,
     )
 
 
@@ -615,6 +1050,31 @@ def render_text_report(info: dict[str, Any], benchmarks: Benchmarks) -> str:
             lines.append("TCP latency: unavailable")
         else:
             lines.append(f"TCP latency: {benchmarks.tcp_latency_ms} ms")
+        if benchmarks.dns_lookup_ms is not None:
+            lines.append(f"DNS lookup: {benchmarks.dns_lookup_ms} ms")
+        if benchmarks.network_jitter_ms is not None:
+            lines.append(f"Network jitter: {benchmarks.network_jitter_ms} ms")
+        if benchmarks.network_stability_score is not None:
+            lines.append(f"Network stability: {benchmarks.network_stability_score}%")
+        if benchmarks.network_endpoints:
+            lines.append("Endpoint ping:")
+            for endpoint in benchmarks.network_endpoints:
+                ep = endpoint.get("endpoint", "unknown")
+                if endpoint.get("reachable"):
+                    lines.append(
+                        f"- {ep}: avg {endpoint.get('avg_latency_ms')} ms, jitter {endpoint.get('jitter_ms')} ms"
+                    )
+                else:
+                    lines.append(f"- {ep}: unreachable")
+        if benchmarks.plugin_results:
+            lines.append("Plugin benchmarks:")
+            for item in benchmarks.plugin_results:
+                if item.get("ok"):
+                    lines.append(
+                        f"- {item.get('name')}: score {item.get('score', 'n/a')} (elapsed {item.get('elapsed_ms')} ms)"
+                    )
+                else:
+                    lines.append(f"- {item.get('name')}: failed ({item.get('error', 'unknown error')})")
 
     if not psutil:
         lines.append("")
@@ -627,6 +1087,72 @@ def render_text_report(info: dict[str, Any], benchmarks: Benchmarks) -> str:
         lines.append("[HISTORY]")
         lines.append(f"Saved Runs: {len(history)}")
         lines.append(f"Last Saved Run: {latest.get('timestamp', 'Unknown')}")
+
+    health = info.get("health_check")
+    if isinstance(health, dict):
+        lines.append("")
+        lines.append("[HEALTH CHECK]")
+        lines.append(f"Overall Score: {health.get('total_score', 0)} ({health.get('grade', 'N/A')})")
+        category_scores = health.get("category_scores", {})
+        if isinstance(category_scores, dict):
+            for key in ("cpu", "memory", "disk", "network", "plugin"):
+                value = category_scores.get(key)
+                if value is not None:
+                    lines.append(f"- {key.upper()}: {value}")
+        for recommendation in health.get("recommendations", [])[:6]:
+            lines.append(f"- {recommendation}")
+
+    trend = info.get("trend")
+    if isinstance(trend, dict):
+        lines.append("")
+        lines.append("[TREND]")
+        today = trend.get("today", {})
+        week = trend.get("week", {})
+        month = trend.get("month", {})
+        if today:
+            lines.append(
+                "Today CPU/MEM/DISK_READ/LAT: "
+                f"{today.get('cpu_loop_ops_per_sec', 'n/a')} / "
+                f"{today.get('memory_copy_mb_s', 'n/a')} / "
+                f"{today.get('disk_read_mb_s', 'n/a')} / "
+                f"{today.get('tcp_latency_ms', 'n/a')}"
+            )
+        if week:
+            lines.append(
+                "Week CPU/MEM/DISK_READ/LAT: "
+                f"{week.get('cpu_loop_ops_per_sec', 'n/a')} / "
+                f"{week.get('memory_copy_mb_s', 'n/a')} / "
+                f"{week.get('disk_read_mb_s', 'n/a')} / "
+                f"{week.get('tcp_latency_ms', 'n/a')}"
+            )
+        if month:
+            lines.append(
+                "Month CPU/MEM/DISK_READ/LAT: "
+                f"{month.get('cpu_loop_ops_per_sec', 'n/a')} / "
+                f"{month.get('memory_copy_mb_s', 'n/a')} / "
+                f"{month.get('disk_read_mb_s', 'n/a')} / "
+                f"{month.get('tcp_latency_ms', 'n/a')}"
+            )
+        flags = trend.get("degradation_flags", [])
+        for flag in flags:
+            lines.append(f"- Warning: {flag}")
+
+    alerts = info.get("alerts", [])
+    thresholds = info.get("alert_thresholds", {})
+    if isinstance(alerts, list):
+        lines.append("")
+        lines.append("[SMART ALERTS]")
+        if isinstance(thresholds, dict):
+            lines.append(
+                "Thresholds: "
+                f"RAM>{thresholds.get('memory_percent', 85)}% | "
+                f"Disk>{thresholds.get('disk_percent', 90)}% | "
+                f"CPU>{thresholds.get('cpu_percent', 90)}%"
+            )
+        for alert in alerts[:6]:
+            if isinstance(alert, dict):
+                lines.append(f"- [{alert.get('level', 'info').upper()}] {alert.get('title')}: {alert.get('message')}")
+                lines.append(f"  Action: {alert.get('action')}")
 
     return "\n".join(lines)
 
@@ -692,11 +1218,49 @@ def export_report_pdf(payload: dict[str, Any], path: Path) -> Path:
 
     info = payload["info"]
     benchmarks = Benchmarks(**payload["benchmarks"])
-    story: list[Any] = [
-        Paragraph("PC Speed Test Report", title_style),
-        Paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}", body_style),
-        Spacer(1, 8),
+    health = info.get("health_check", {})
+    alerts = info.get("alerts", [])
+    trend = info.get("trend", {})
+
+    executive_summary = []
+    if isinstance(health, dict):
+        executive_summary.append(
+            f"Overall health score: <b>{health.get('total_score', 0)}</b> ({health.get('grade', 'N/A')})."
+        )
+        recommendations = health.get("recommendations", [])
+        if recommendations:
+            executive_summary.append(f"Top recommendation: {recommendations[0]}")
+    if isinstance(alerts, list) and alerts:
+        critical_count = sum(1 for item in alerts if isinstance(item, dict) and item.get("level") == "critical")
+        executive_summary.append(f"Current alerts: {len(alerts)} (critical: {critical_count}).")
+    if isinstance(trend, dict) and trend.get("degradation_flags"):
+        executive_summary.append("Trend detected performance degradation requiring follow-up.")
+    if not executive_summary:
+        executive_summary.append("No notable risk detected in this run.")
+
+    story: list[Any] = []
+    logo_candidates = [
+        BUILD_DIR / "assets" / "pc_speed_test_1024.png",
+        BUILD_DIR / "assets" / "logo.png",
     ]
+    if Image is not None:
+        for logo_path in logo_candidates:
+            if logo_path.exists():
+                try:
+                    logo_img = Image(str(logo_path), width=42, height=42)
+                    story.append(logo_img)
+                    break
+                except Exception:
+                    continue
+
+    story.extend([
+        Paragraph("PC Speed Test Report", title_style),
+        Paragraph(f"<b>Version:</b> {APP_VERSION}", body_style),
+        Paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}", body_style),
+        Paragraph("<b>Executive Summary</b>", section_style),
+        Paragraph(" ".join(executive_summary), body_style),
+        Spacer(1, 8),
+    ])
 
     sections = build_sections(info, benchmarks)
     for title, rows in sections:
@@ -854,8 +1418,55 @@ def build_sections(info: dict[str, Any], benchmarks: Benchmarks) -> list[tuple[s
                 if benchmarks.tcp_latency_ms is None
                 else f"{benchmarks.tcp_latency_ms} ms",
             ),
+            (
+                "DNS Lookup",
+                "Unavailable"
+                if benchmarks.dns_lookup_ms is None
+                else f"{benchmarks.dns_lookup_ms} ms",
+            ),
+            (
+                "Network Jitter",
+                "Unavailable"
+                if benchmarks.network_jitter_ms is None
+                else f"{benchmarks.network_jitter_ms} ms",
+            ),
+            (
+                "Network Stability",
+                "Unavailable"
+                if benchmarks.network_stability_score is None
+                else f"{benchmarks.network_stability_score}%",
+            ),
         ]
     sections.append(("Benchmark", benchmark_rows))
+
+    if benchmarks.network_endpoints:
+        endpoint_rows = []
+        for item in benchmarks.network_endpoints:
+            endpoint = str(item.get("endpoint", "unknown"))
+            if item.get("reachable"):
+                endpoint_rows.append(
+                    (
+                        endpoint,
+                        f"avg {item.get('avg_latency_ms', 'n/a')} ms | jitter {item.get('jitter_ms', 'n/a')} ms",
+                    )
+                )
+            else:
+                endpoint_rows.append((endpoint, "unreachable"))
+        sections.append(("Network Advanced", endpoint_rows))
+
+    if benchmarks.plugin_results:
+        plugin_rows = []
+        for result in benchmarks.plugin_results:
+            if result.get("ok"):
+                plugin_rows.append(
+                    (
+                        str(result.get("name", "plugin")),
+                        f"score {result.get('score', 'n/a')} | {result.get('elapsed_ms', 'n/a')} ms",
+                    )
+                )
+            else:
+                plugin_rows.append((str(result.get("name", "plugin")), str(result.get("error", "failed"))))
+        sections.append(("Plugin Benchmarks", plugin_rows))
 
     if not psutil:
         sections.append(
@@ -892,6 +1503,85 @@ def build_sections(info: dict[str, Any], benchmarks: Benchmarks) -> list[tuple[s
                 ],
             )
         )
+
+    health = info.get("health_check")
+    if isinstance(health, dict):
+        category_rows = []
+        category_scores = health.get("category_scores", {})
+        if isinstance(category_scores, dict):
+            for key in ("cpu", "memory", "disk", "network", "plugin"):
+                value = category_scores.get(key)
+                if value is not None:
+                    category_rows.append((key.upper(), f"{value}"))
+        for rec in health.get("recommendations", [])[:4]:
+            category_rows.append(("Recommendation", str(rec)))
+        sections.append(
+            (
+                "Health Check",
+                [("Overall", f"{health.get('total_score', 0)} ({health.get('grade', 'N/A')})")] + category_rows,
+            )
+        )
+
+    trend = info.get("trend")
+    if isinstance(trend, dict):
+        trend_rows: list[tuple[str, str]] = []
+        for bucket in ("today", "week", "month"):
+            point = trend.get(bucket, {})
+            if isinstance(point, dict) and point:
+                trend_rows.append(
+                    (
+                        bucket.capitalize(),
+                        " | ".join(
+                            [
+                                f"CPU {point.get('cpu_loop_ops_per_sec', 'n/a')}",
+                                f"MEM {point.get('memory_copy_mb_s', 'n/a')}",
+                                f"DISK {point.get('disk_read_mb_s', 'n/a')}",
+                                f"LAT {point.get('tcp_latency_ms', 'n/a')}",
+                            ]
+                        ),
+                    )
+                )
+        for flag in trend.get("degradation_flags", [])[:4]:
+            trend_rows.append(("Flag", str(flag)))
+        if trend_rows:
+            sections.append(("Performance Trend", trend_rows))
+
+    alerts = info.get("alerts", [])
+    if isinstance(alerts, list) and alerts:
+        alert_rows = []
+        for alert in alerts[:6]:
+            if isinstance(alert, dict):
+                alert_rows.append(
+                    (
+                        f"[{str(alert.get('level', 'info')).upper()}] {alert.get('title', 'Alert')}",
+                        f"{alert.get('message', '')} Action: {alert.get('action', '')}",
+                    )
+                )
+        if alert_rows:
+            sections.append(("Smart Alerts", alert_rows))
+
+    update_info = info.get("update")
+    if isinstance(update_info, dict) and update_info.get("checked"):
+        sections.append(
+            (
+                "Update",
+                [
+                    ("Current", str(update_info.get("current_version", APP_VERSION))),
+                    ("Latest", str(update_info.get("latest_version", APP_VERSION))),
+                    ("Available", "Yes" if update_info.get("update_available") else "No"),
+                ],
+            )
+        )
+
+    monitor_info = info.get("background_monitor")
+    if isinstance(monitor_info, dict):
+        rows = [("Snapshots", str(monitor_info.get("snapshot_count", 0)))]
+        last_snapshot = monitor_info.get("last_snapshot")
+        if isinstance(last_snapshot, dict):
+            rows.append(("Last Snapshot", str(last_snapshot.get("timestamp", "n/a"))))
+        for anomaly in monitor_info.get("anomalies", [])[:4]:
+            rows.append(("Anomaly", str(anomaly)))
+        sections.append(("Background Monitor", rows))
 
     return sections
 
@@ -1607,6 +2297,136 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
         details.grid(row=0, column=1, sticky="nsew")
         render_key_value_rows(details, rows)
 
+    def render_health_panel(
+        panel_body: ttk.Frame,
+        rows: list[tuple[str, str]],
+        info: dict[str, Any],
+    ) -> None:
+        panel_body.columnconfigure(1, weight=1)
+        health = info.get("health_check", {})
+        score = float(health.get("total_score", 0.0)) if isinstance(health, dict) else 0.0
+        grade = str(health.get("grade", "N/A")) if isinstance(health, dict) else "N/A"
+
+        chart_wrap = ttk.Frame(panel_body, style="Card.TFrame")
+        chart_wrap.grid(row=0, column=0, sticky="nw", padx=(0, 16), pady=2)
+        chart = tk.Canvas(chart_wrap, width=332, height=206, bg=palette["panel"], highlightthickness=0, bd=0)
+        chart.grid(row=0, column=0, sticky="n")
+
+        chart.create_oval(26, 24, 166, 164, outline=palette["line"], width=16)
+        chart.create_arc(
+            26,
+            24,
+            166,
+            164,
+            start=90,
+            extent=-(score * 3.6),
+            style="arc",
+            outline="#22c55e" if score >= 80 else "#f59e0b" if score >= 60 else "#ef4444",
+            width=16,
+        )
+        chart.create_text(96, 78, text="HEALTH", fill=palette["muted"], font=("Helvetica", 10, "bold"))
+        chart.create_text(96, 104, text=f"{score:.0f}", fill=palette["text"], font=("Helvetica", 20, "bold"))
+        chart.create_text(96, 128, text=f"Grade {grade}", fill=palette["accent"], font=("Helvetica", 10, "bold"))
+
+        scores = health.get("category_scores", {}) if isinstance(health, dict) else {}
+        draw_meter(chart, 52, "CPU", float(scores.get("cpu", 0.0)) / 100.0, f"{scores.get('cpu', 0)}", "#38bdf8", width=140)
+        draw_meter(
+            chart,
+            94,
+            "Memory",
+            float(scores.get("memory", 0.0)) / 100.0,
+            f"{scores.get('memory', 0)}",
+            "#22c55e",
+            width=140,
+        )
+        draw_meter(chart, 136, "Disk", float(scores.get("disk", 0.0)) / 100.0, f"{scores.get('disk', 0)}", "#f59e0b", width=140)
+        draw_meter(
+            chart,
+            178,
+            "Network",
+            float(scores.get("network", 0.0)) / 100.0,
+            f"{scores.get('network', 0)}",
+            "#a78bfa",
+            width=140,
+        )
+
+        details = ttk.Frame(panel_body, style="Card.TFrame")
+        details.grid(row=0, column=1, sticky="nsew")
+        render_key_value_rows(details, rows, wraplength=420)
+
+    def render_trend_panel(
+        panel_body: ttk.Frame,
+        rows: list[tuple[str, str]],
+        trend: dict[str, Any],
+    ) -> None:
+        panel_body.columnconfigure(1, weight=1)
+        chart_wrap = ttk.Frame(panel_body, style="Card.TFrame")
+        chart_wrap.grid(row=0, column=0, sticky="nw", padx=(0, 16), pady=2)
+        chart = tk.Canvas(chart_wrap, width=332, height=206, bg=palette["panel"], highlightthickness=0, bd=0)
+        chart.grid(row=0, column=0, sticky="n")
+
+        chart.create_rectangle(20, 22, 312, 182, outline=palette["line"], width=1)
+        today = trend.get("today", {})
+        week = trend.get("week", {})
+        month = trend.get("month", {})
+        metrics = [
+            ("CPU", "cpu_loop_ops_per_sec", "#38bdf8"),
+            ("MEM", "memory_copy_mb_s", "#22c55e"),
+            ("DSK", "disk_read_mb_s", "#f59e0b"),
+            ("LAT", "tcp_latency_ms", "#a78bfa"),
+        ]
+        max_value = 1.0
+        for _, key, _ in metrics:
+            for bucket in (today, week, month):
+                value = bucket.get(key)
+                if isinstance(value, (int, float)):
+                    max_value = max(max_value, float(value))
+        x_points = {"today": 66, "week": 166, "month": 266}
+        for _, key, color in metrics:
+            points: list[float] = []
+            for bucket_name, x in x_points.items():
+                bucket = trend.get(bucket_name, {})
+                value = bucket.get(key)
+                if isinstance(value, (int, float)):
+                    y = 172 - (float(value) / max_value) * 130
+                    points.extend([x, y])
+            if len(points) >= 4:
+                chart.create_line(*points, fill=color, width=2, smooth=True)
+                for idx in range(0, len(points), 2):
+                    chart.create_oval(points[idx] - 3, points[idx + 1] - 3, points[idx] + 3, points[idx + 1] + 3, fill=color, outline=color)
+        chart.create_text(66, 192, text="Today", fill=palette["muted"], font=("Helvetica", 8))
+        chart.create_text(166, 192, text="Week", fill=palette["muted"], font=("Helvetica", 8))
+        chart.create_text(266, 192, text="Month", fill=palette["muted"], font=("Helvetica", 8))
+
+        details = ttk.Frame(panel_body, style="Card.TFrame")
+        details.grid(row=0, column=1, sticky="nsew")
+        render_key_value_rows(details, rows, wraplength=420)
+
+    def render_process_panel(
+        panel_body: ttk.Frame,
+        rows: list[tuple[str, str]],
+        top_processes: list[dict[str, Any]],
+    ) -> None:
+        panel_body.columnconfigure(1, weight=1)
+        chart_wrap = ttk.Frame(panel_body, style="Card.TFrame")
+        chart_wrap.grid(row=0, column=0, sticky="nw", padx=(0, 16), pady=2)
+        chart = tk.Canvas(chart_wrap, width=332, height=206, bg=palette["panel"], highlightthickness=0, bd=0)
+        chart.grid(row=0, column=0, sticky="n")
+
+        max_cpu = max((float(p.get("cpu_percent", 0.0)) for p in top_processes), default=1.0) or 1.0
+        for idx, process in enumerate(top_processes[:5]):
+            y = 20 + idx * 36
+            cpu = float(process.get("cpu_percent", 0.0))
+            bar_w = (cpu / max_cpu) * 170
+            chart.create_text(12, y + 8, text=str(process.get("name", "process"))[:18], fill=palette["muted"], font=("Helvetica", 8), anchor="w")
+            chart.create_rectangle(140, y, 310, y + 14, fill=palette["panel_alt"], outline=palette["line"], width=1)
+            chart.create_rectangle(140, y, 140 + bar_w, y + 14, fill="#38bdf8", outline="#38bdf8")
+            chart.create_text(312, y + 8, text=f"{cpu:.1f}%", fill=palette["text"], font=("Helvetica", 8), anchor="e")
+
+        details = ttk.Frame(panel_body, style="Card.TFrame")
+        details.grid(row=0, column=1, sticky="nsew")
+        render_key_value_rows(details, rows, wraplength=420)
+
     def render_payload(payload: dict[str, Any]) -> None:
         nonlocal latest_payload
         latest_payload = payload
@@ -1675,6 +2495,15 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
                 continue
             if title == "Benchmark":
                 render_benchmark_panel(panel_body, rows, benchmarks)
+                continue
+            if title == "Health Check":
+                render_health_panel(panel_body, rows, info)
+                continue
+            if title == "Performance Trend":
+                render_trend_panel(panel_body, rows, info.get("trend", {}))
+                continue
+            if title == "Top Processes":
+                render_process_panel(panel_body, rows, info.get("top_processes", []))
                 continue
 
             render_key_value_rows(panel_body, rows, wraplength=420)
@@ -1812,10 +2641,24 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
     ).grid(row=0, column=2, padx=(0, 10))
     ttk.Button(
         controls,
+        text="Open Monitor",
+        style="Secondary.TButton",
+        command=lambda: status_var.set(
+            "Opened system monitor." if open_system_monitor() else "Could not open system monitor."
+        ),
+    ).grid(row=0, column=3, padx=(0, 10))
+    ttk.Button(
+        controls,
         text="Run Benchmark",
         style="Primary.TButton",
         command=lambda: load_payload(True),
-    ).grid(row=0, column=3)
+    ).grid(row=0, column=4, padx=(0, 10))
+    ttk.Button(
+        controls,
+        text="Health Check",
+        style="Primary.TButton",
+        command=lambda: load_payload(True),
+    ).grid(row=0, column=5)
 
     if run_benchmark_on_start:
         load_payload(True)
@@ -1824,6 +2667,84 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
     auto_refresh_job = root.after(AUTO_REFRESH_MS, schedule_auto_refresh)
     root.mainloop()
     return 0
+
+
+def check_for_update(current_version: str = APP_VERSION) -> dict[str, Any]:
+    version_file = BUILD_DIR / "latest_version.json"
+    if not version_file.exists():
+        return {"checked": False, "update_available": False}
+    try:
+        payload = json.loads(version_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"checked": False, "update_available": False}
+    latest = str(payload.get("version", "")).strip()
+    if not latest:
+        return {"checked": False, "update_available": False}
+    return {
+        "checked": True,
+        "update_available": latest != current_version,
+        "current_version": current_version,
+        "latest_version": latest,
+        "download_url": payload.get("download_url"),
+    }
+
+
+def run_background_monitor(interval_seconds: int, run_once: bool = False) -> int:
+    ensure_output_dirs()
+    print(f"Background monitor started. Interval: {interval_seconds}s. Snapshot file: {SNAPSHOT_FILE}")
+    while True:
+        info = gather_basic_info()
+        snapshot = {
+            "timestamp": info.get("timestamp"),
+            "cpu_percent": float(info.get("cpu", {}).get("usage_percent", 0.0)),
+            "memory_percent": float(info.get("memory", {}).get("usage_percent", 0.0)) if "memory" in info else 0.0,
+            "disk_percent": float(info.get("disk", {}).get("usage_percent", 0.0)),
+            "process_count": int(info.get("process_count", 0)),
+        }
+        snapshots = append_snapshot(snapshot)
+        anomalies = detect_snapshot_anomalies(snapshots)
+        if anomalies:
+            print(f"[{snapshot['timestamp']}] anomaly: {' | '.join(anomalies)}")
+        else:
+            print(
+                f"[{snapshot['timestamp']}] cpu={snapshot['cpu_percent']:.1f}% "
+                f"ram={snapshot['memory_percent']:.1f}% disk={snapshot['disk_percent']:.1f}%"
+            )
+        if run_once:
+            return 0
+        time.sleep(max(interval_seconds, 5))
+
+
+def open_system_monitor() -> bool:
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", "-a", "Activity Monitor"])
+            return True
+        if system == "Windows":
+            subprocess.Popen(["cmd", "/c", "start", "", "taskmgr"], shell=False)
+            return True
+        if system == "Linux":
+            for candidate in ("gnome-system-monitor", "ksysguard", "xterm -e top"):
+                try:
+                    subprocess.Popen(candidate.split())
+                    return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
+def run_auto_update(update_info: dict[str, Any]) -> tuple[bool, str]:
+    if not update_info.get("checked"):
+        return False, "No update metadata found (build/latest_version.json)."
+    if not update_info.get("update_available"):
+        return True, "Already on latest version."
+    download_url = update_info.get("download_url")
+    if not download_url:
+        return False, "Update available but download_url is missing."
+    return False, f"Auto-update placeholder: download and install manually from {download_url}"
 
 
 def build_output(include_benchmark: bool) -> dict[str, Any]:
@@ -1835,10 +2756,24 @@ def build_output(include_benchmark: bool) -> dict[str, Any]:
         info["benchmark_history"] = append_benchmark_history(info, benchmarks)
     else:
         info["benchmark_history"] = load_benchmark_history()
+    snapshots = load_snapshots()
+    thresholds = load_alert_thresholds()
+    info["alert_thresholds"] = thresholds
+    info["alerts"] = gather_smart_alerts(info, thresholds=thresholds, snapshots=snapshots)
+    info["trend"] = build_trend_snapshot(info["benchmark_history"], benchmarks)
+    info["health_check"] = compute_health_assessment(info, benchmarks)
+    info["update"] = check_for_update()
+    if snapshots:
+        info["background_monitor"] = {
+            "snapshot_count": len(snapshots),
+            "last_snapshot": snapshots[-1],
+            "anomalies": detect_snapshot_anomalies(snapshots),
+        }
     return {
         "info": info,
         "benchmarks": asdict(benchmarks),
         "psutil_available": bool(psutil),
+        "version": APP_VERSION,
     }
 
 
@@ -1882,14 +2817,85 @@ def parse_args() -> argparse.Namespace:
         default="pdf",
         help="Format used with --export-report. Default: pdf.",
     )
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        help="One-click health check: run full benchmark and print score + recommendations.",
+    )
+    parser.add_argument(
+        "--background-monitor",
+        action="store_true",
+        help="Run lightweight background monitor and store periodic snapshots.",
+    )
+    parser.add_argument(
+        "--monitor-interval",
+        type=int,
+        default=60,
+        help="Snapshot interval in seconds for --background-monitor. Default: 60.",
+    )
+    parser.add_argument(
+        "--monitor-once",
+        action="store_true",
+        help="Capture exactly one snapshot and exit (for testing background monitor pipeline).",
+    )
+    parser.add_argument(
+        "--open-system-monitor",
+        action="store_true",
+        help="Open Activity Monitor (macOS) / Task Manager (Windows).",
+    )
+    parser.add_argument(
+        "--check-update",
+        action="store_true",
+        help="Check local update metadata in build/latest_version.json.",
+    )
+    parser.add_argument(
+        "--auto-update",
+        action="store_true",
+        help="Attempt auto-update flow using local metadata.",
+    )
+    parser.add_argument("--set-ram-threshold", type=float, help="Set RAM alert threshold percent (e.g. 85).")
+    parser.add_argument("--set-disk-threshold", type=float, help="Set Disk alert threshold percent (e.g. 90).")
+    parser.add_argument("--set-cpu-threshold", type=float, help="Set CPU alert threshold percent (e.g. 90).")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if (
+        args.set_ram_threshold is not None
+        or args.set_disk_threshold is not None
+        or args.set_cpu_threshold is not None
+    ):
+        thresholds = load_alert_thresholds()
+        if args.set_ram_threshold is not None:
+            thresholds["memory_percent"] = max(1.0, min(args.set_ram_threshold, 100.0))
+        if args.set_disk_threshold is not None:
+            thresholds["disk_percent"] = max(1.0, min(args.set_disk_threshold, 100.0))
+        if args.set_cpu_threshold is not None:
+            thresholds["cpu_percent"] = max(1.0, min(args.set_cpu_threshold, 100.0))
+        save_alert_thresholds(thresholds)
+        print("Saved alert thresholds:")
+        print(json.dumps(thresholds, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.background_monitor:
+        return run_background_monitor(interval_seconds=args.monitor_interval, run_once=args.monitor_once)
+    if args.open_system_monitor:
+        print("Opened system monitor." if open_system_monitor() else "Could not open system monitor.")
+        return 0
+    if args.check_update:
+        update_info = check_for_update()
+        print(json.dumps(update_info, indent=2, ensure_ascii=False))
+        if args.auto_update:
+            ok, message = run_auto_update(update_info)
+            print(message)
+            return 0 if ok else 1
+        return 0
+
+    include_benchmark = args.benchmark or args.health_check
     if args.gui:
-        return launch_gui(run_benchmark_on_start=args.benchmark)
-    payload = build_output(include_benchmark=args.benchmark)
+        return launch_gui(run_benchmark_on_start=include_benchmark)
+    payload = build_output(include_benchmark=include_benchmark)
     if args.export_report:
         try:
             exported = export_report(payload, fmt=args.report_format)
@@ -1902,6 +2908,14 @@ def main() -> int:
         print_json(payload)
     else:
         print_text(payload)
+        if args.health_check:
+            health = payload["info"].get("health_check", {})
+            if isinstance(health, dict):
+                print("")
+                print("=== ONE-CLICK HEALTH CHECK ===")
+                print(f"Score: {health.get('total_score', 0)} | Grade: {health.get('grade', 'N/A')}")
+                for recommendation in health.get("recommendations", [])[:5]:
+                    print(f"- {recommendation}")
     return 0
 
 

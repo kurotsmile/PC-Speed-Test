@@ -38,6 +38,11 @@ except ImportError:  # pragma: no cover - fallback path is intentional
     psutil = None
 
 try:
+    from PIL import ImageGrab  # type: ignore
+except ImportError:  # pragma: no cover - optional screenshot path
+    ImageGrab = None
+
+try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -56,7 +61,10 @@ except ImportError:  # pragma: no cover - optional export path
 
 
 AUTO_REFRESH_MS = 3000
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
 REPORT_DIR = OUTPUT_DIR / "reports"
 PDF_DIR = OUTPUT_DIR / "pdf"
@@ -1814,7 +1822,12 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
         error_message = ""
         success = False
         try:
-            if system == "Darwin":
+            if ImageGrab is not None and system in {"Windows", "Darwin"}:
+                bbox = (x, y, x + width, y + height)
+                image = ImageGrab.grab(bbox=bbox, all_screens=True)
+                image.save(target_path, format="PNG")
+                success = True
+            elif system == "Darwin":
                 result = subprocess.run(
                     [
                         "screencapture",
@@ -1829,8 +1842,10 @@ def launch_gui(run_benchmark_on_start: bool) -> int:
                 success = result.returncode == 0
                 error_message = result.stderr.strip()
             else:
-                error_message = "Screenshot capture is currently implemented for macOS."
+                error_message = "Screenshot capture is currently supported on Windows and macOS."
         except OSError as exc:
+            error_message = str(exc)
+        except Exception as exc:
             error_message = str(exc)
 
         if success:
@@ -2861,6 +2876,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # In packaged Windows/macOS apps, users usually double-click the executable.
+    # Default to GUI for that no-argument path while preserving CLI behavior elsewhere.
+    if getattr(sys, "frozen", False) and len(sys.argv) == 1:
+        args.gui = True
     if (
         args.set_ram_threshold is not None
         or args.set_disk_threshold is not None

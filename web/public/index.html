@@ -47,6 +47,8 @@
           </div>
           <div class="top-actions">
             <a class="ghost-link" href="#features">Features</a>
+            <a class="ghost-link" href="#screenshots">Screenshots</a>
+            <a class="ghost-link" href="#capabilities">Capabilities</a>
             <a class="ghost-link" href="#dashboard">Dashboard</a>
             <a class="ghost-link" href="#contact">Contact</a>
             <a class="cta-link" href="https://pcspeedtool.web.app/" target="_blank" rel="noreferrer">Open Site</a>
@@ -58,8 +60,10 @@
             <p class="eyebrow">Desktop Benchmark Tool</p>
             <h1>System insights, speed tests, and a visual control panel in one app.</h1>
             <p class="hero-lead">
-              PC Speed Test is a Python desktop utility that inspects hardware, benchmarks core subsystems,
-              and presents results through grouped panels, live charts, and export-ready screenshots.
+              PC Speed Test is a cross-platform desktop utility that combines deep system inspection,
+              lightweight benchmark execution, health scoring, and trend-aware monitoring in a single interface.
+              Teams can run interactive diagnostics, automate checks through CLI mode, and export executive-ready
+              reports for support, audits, and performance validation.
             </p>
             <div class="live-link-wrap">
               <span class="signal-label">Live Site</span>
@@ -72,25 +76,25 @@
               <a class="secondary-button" href="#contact">Contact Now</a>
             </div>
             <div class="download-actions">
-              <a class="download-button mac" href="#" aria-label="Download macOS version (placeholder)">
+              <a class="download-button mac" href="https://github.com/kurotsmile/PC-Speed-Test/releases/tag/public" target="_blank" rel="noreferrer" aria-label="Download macOS release">
                 Download macOS
               </a>
-              <a class="download-button windows" href="#" aria-label="Download Windows version (placeholder)">
+              <a class="download-button windows" href="https://github.com/kurotsmile/PC-Speed-Test/releases/tag/public" target="_blank" rel="noreferrer" aria-label="Download Windows release">
                 Download Windows
               </a>
             </div>
             <div class="signal-strip">
               <div class="signal-card">
                 <span class="signal-label">Realtime View</span>
-                <span class="signal-value">Auto-refresh dashboard</span>
+                <span class="signal-value">Auto-refresh telemetry dashboard</span>
               </div>
               <div class="signal-card">
                 <span class="signal-label">Benchmarks</span>
-                <span class="signal-value">CPU, RAM, Disk, File Ops</span>
+                <span class="signal-value">CPU, RAM, Disk, File Ops, Network</span>
               </div>
               <div class="signal-card">
                 <span class="signal-label">Export</span>
-                <span class="signal-value">Instant PNG capture</span>
+                <span class="signal-value">TXT, JSON, PDF, and screenshots</span>
               </div>
             </div>
           </div>
@@ -153,29 +157,81 @@
       </header>
 
       <main>
+        <section class="gallery-shell" id="screenshots">
+          <div class="gallery-head">
+            <p class="eyebrow">Visual Walkthrough</p>
+            <h2>Real interface snapshots from the desktop tool.</h2>
+            <p>
+              The images below highlight the production UI used for diagnostics, benchmarking, and
+              operator-ready reporting workflows.
+            </p>
+          </div>
+          <div class="gallery-grid">
+            <figure class="shot-card">
+              <img src="/images/pst1.png" alt="PC Speed Test dashboard overview panel" loading="lazy" />
+              <figcaption>Dashboard overview with grouped performance telemetry</figcaption>
+            </figure>
+            <figure class="shot-card">
+              <img src="/images/pst2.png" alt="PC Speed Test benchmark and system details screen" loading="lazy" />
+              <figcaption>Benchmark execution view with system detail breakdown</figcaption>
+            </figure>
+            <figure class="shot-card">
+              <img src="/images/pst3.png" alt="PC Speed Test health insights and reporting screen" loading="lazy" />
+              <figcaption>Health insight and reporting workflow in one workspace</figcaption>
+            </figure>
+          </div>
+        </section>
+
         <section class="feature-band" id="features">
           <article class="feature-card">
             <p class="feature-index">01</p>
-            <h2>Deep hardware visibility</h2>
+            <h2>Comprehensive hardware visibility</h2>
             <p>
-              Grouped panels present CPU, GPU, memory, disk, network, system uptime, and battery details
-              in a layout designed for fast scanning.
+              Grouped panels expose CPU, GPU, memory, disk, network, system uptime, and battery context
+              in a layout optimized for rapid operator decisions.
             </p>
           </article>
           <article class="feature-card">
             <p class="feature-index">02</p>
-            <h2>Meaningful visual feedback</h2>
+            <h2>Actionable health intelligence</h2>
             <p>
-              Each panel uses a chart that matches the metric: gauges for CPU, line charts for memory,
-              donuts for disk, and bars for benchmark comparisons.
+              Built-in Health Check converts raw metrics into a practical score with prioritized recommendations,
+              helping teams identify bottlenecks before they become incidents.
             </p>
           </article>
           <article class="feature-card">
             <p class="feature-index">03</p>
-            <h2>Fast reporting workflow</h2>
+            <h2>Operational reporting workflow</h2>
             <p>
-              Capture the dashboard as an image, benchmark the machine on demand, and present the result
-              to stakeholders without extra tooling.
+              Export benchmark evidence to TXT, JSON, or PDF, capture dashboard screenshots, and share
+              standardized reports with stakeholders without extra tooling.
+            </p>
+          </article>
+        </section>
+
+        <section class="feature-band" id="capabilities">
+          <article class="feature-card">
+            <p class="feature-index">04</p>
+            <h2>Background monitoring</h2>
+            <p>
+              Run low-overhead background snapshots on a custom interval, track trends over time,
+              and surface anomaly signals for proactive maintenance.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">05</p>
+            <h2>Smart threshold alerts</h2>
+            <p>
+              Configure RAM, disk, and CPU thresholds to match your environment and receive focused
+              warnings instead of generic telemetry noise.
+            </p>
+          </article>
+          <article class="feature-card">
+            <p class="feature-index">06</p>
+            <h2>Extensible plugin architecture</h2>
+            <p>
+              Add custom Python benchmarks through the plugin folder and integrate domain-specific tests
+              into one unified health and performance report.
             </p>
           </article>
         </section>
@@ -183,10 +239,10 @@
         <section class="spec-layout">
           <div class="spec-copy">
             <p class="eyebrow">What It Tests</p>
-            <h2>Built for practical machine validation, not vanity benchmarks.</h2>
+            <h2>Built for practical diagnostics, not synthetic vanity numbers.</h2>
             <p>
-              The desktop tool combines lightweight diagnostics with speed tests that reflect real machine
-              behavior during demos, support checks, and internal evaluations.
+              The platform combines lightweight benchmarks, environment inspection, update metadata checks,
+              and CLI automation to support support desks, QA teams, and internal IT operations.
             </p>
             <ul class="spec-list">
               <li>CPU loop throughput</li>
@@ -194,6 +250,11 @@
               <li>Disk read/write speed</li>
               <li>File operation throughput</li>
               <li>TCP connection latency</li>
+              <li>DNS lookup and jitter stability</li>
+              <li>Health score with recommendations</li>
+              <li>Background snapshot anomaly detection</li>
+              <li>Custom plugin benchmark scoring</li>
+              <li>CLI + GUI workflow for different teams</li>
             </ul>
           </div>
 
@@ -224,10 +285,10 @@
         <section class="contact-card" id="contact">
           <div class="contact-copy">
             <p class="eyebrow">Contact</p>
-            <h2>Need a demo, product consultation, or a custom build?</h2>
+            <h2>Need a live demo, deployment support, or a custom feature pack?</h2>
             <p>
-              Contact the project owner directly for collaboration, product walkthroughs, and tailored
-              versions of the PC Speed Test tool.
+              Contact the project owner for onboarding, implementation planning, and tailored editions
+              aligned with your monitoring, audit, or performance validation requirements.
             </p>
           </div>
           <div class="contact-grid">

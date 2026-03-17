@@ -1,0 +1,349 @@
+dfdfdsfdiff --git a/Pc_speed_test.py b/Pc_speed_test.py
+index 1111111..2222222 100644
+--- a/Pc_speed_test.py
++++ b/Pc_speed_test.py
+@@
+-    palette = {
+-        "bg": "#0f172a",
+-        "panel": "#111827",
+-        "text": "#e5e7eb",
+-    }
++    palette = {
++        "bg": "#0b1220",
++        "bg_soft": "#111827",
++        "panel": "#121a2b",
++        "panel_alt": "#182235",
++        "panel_hover": "#1d2a40",
++        "text": "#f8fafc",
++        "muted": "#94a3b8",
++        "accent": "#60a5fa",
++        "accent_alt": "#3b82f6",
++        "success": "#22c55e",
++        "warning": "#f59e0b",
++        "danger": "#ef4444",
++        "line": "#243247",
++        "line_soft": "#1b2638",
++    }
+@@
+-    style.configure("Card.TFrame", background=palette["panel"])
++    style.configure("Card.TFrame", background=palette["panel"])
++    style.configure("Kpi.TFrame", background=palette["panel_alt"])
+@@
++    # ===== KPI BAR =====
++    summary_bar = ttk.Frame(root, padding=(20, 0, 20, 8))
++    summary_bar.grid(row=1, column=0, sticky="ew")
++
++    for i in range(4):
++        summary_bar.columnconfigure(i, weight=1)
++
++    cpu_kpi = tk.StringVar(value="--")
++    ram_kpi = tk.StringVar(value="--")
++    disk_kpi = tk.StringVar(value="--")
++    health_kpi = tk.StringVar(value="--")
++
++    def kpi_box(parent, col, label, var):
++        box = ttk.Frame(parent, style="Kpi.TFrame", padding=(16, 12))
++        box.grid(row=0, column=col, sticky="ew", padx=6)
++        ttk.Label(box, text=label).pack(anchor="w")
++        ttk.Label(box, textvariable=var, font=("Helvetica", 16, "bold")).pack(anchor="w")
++
++    kpi_box(summary_bar, 0, "CPU", cpu_kpi)
++    kpi_box(summary_bar, 1, "Memory", ram_kpi)
++    kpi_box(summary_bar, 2, "Disk", disk_kpi)
++    kpi_box(summary_bar, 3, "Health", health_kpi)
+@@
++    def usage_color(v):
++        if v > 85:
++            return palette["danger"]
++        elif v > 65:
++            return palette["warning"]
++        return palette["success"]
+@@
++    # update KPI
++    try:
++        cpu_kpi.set(f"{cpu_percent:.1f}%")
++        ram_kpi.set(f"{ram_percent:.1f}%")
++        disk_kpi.set(f"{disk_percent:.1f}%")
++        health_kpi.set(str(health_score))
++    except:
++        pass--- /mnt/data/Pc_speed_test_original.py	2026-03-17 13:09:46.489581105 +0000
++++ /mnt/data/Pc_speed_test.py	2026-03-17 13:09:35.219944681 +0000
+@@ -1601,9 +1601,9 @@
+ 
+     root = tk.Tk()
+     root.title("PC Speed Test Dashboard")
+-    root.geometry("1420x860")
+-    root.minsize(1220, 720)
+-    root.configure(bg="#09111f")
++    root.geometry("1480x900")
++    root.minsize(1240, 760)
++    root.configure(bg="#0b1220")
+ 
+     style = ttk.Style(root)
+     try:
+@@ -1612,31 +1612,44 @@
+         pass
+ 
+     palette = {
+-        "bg": "#09111f",
+-        "panel": "#122033",
+-        "panel_alt": "#0f1a2b",
+-        "text": "#eef4ff",
+-        "muted": "#9fb1c9",
+-        "accent": "#38bdf8",
+-        "accent_alt": "#0ea5e9",
+-        "line": "#1f3550",
++        "bg": "#0b1220",
++        "bg_soft": "#111827",
++        "panel": "#121a2b",
++        "panel_alt": "#182235",
++        "panel_hover": "#1d2a40",
++        "text": "#f8fafc",
++        "muted": "#94a3b8",
++        "accent": "#60a5fa",
++        "accent_alt": "#3b82f6",
++        "success": "#22c55e",
++        "warning": "#f59e0b",
++        "danger": "#ef4444",
++        "line": "#243247",
++        "line_soft": "#1b2638",
+     }
+ 
+     style.configure("App.TFrame", background=palette["bg"])
+-    style.configure("CardOuter.TFrame", background=palette["panel"])
++    style.configure("CardOuter.TFrame", background=palette["bg"])
+     style.configure("Card.TFrame", background=palette["panel"])
+     style.configure("Header.TFrame", background=palette["bg"])
++    style.configure("Kpi.TFrame", background=palette["panel_alt"])
+     style.configure(
+         "CardTitle.TLabel",
+         background=palette["panel"],
+-        foreground=palette["accent"],
++        foreground=palette["text"],
+         font=("Helvetica", 12, "bold"),
+     )
+     style.configure(
++        "CardHint.TLabel",
++        background=palette["panel"],
++        foreground=palette["muted"],
++        font=("Helvetica", 9),
++    )
++    style.configure(
+         "Title.TLabel",
+         background=palette["bg"],
+         foreground=palette["text"],
+-        font=("Helvetica", 22, "bold"),
++        font=("Helvetica", 24, "bold"),
+     )
+     style.configure(
+         "Subtitle.TLabel",
+@@ -1648,7 +1661,7 @@
+         "LabelKey.TLabel",
+         background=palette["panel"],
+         foreground=palette["muted"],
+-        font=("Helvetica", 10, "bold"),
++        font=("Helvetica", 9, "bold"),
+     )
+     style.configure(
+         "LabelValue.TLabel",
+@@ -1657,6 +1670,18 @@
+         font=("Helvetica", 10),
+     )
+     style.configure(
++        "KpiValue.TLabel",
++        background=palette["panel_alt"],
++        foreground=palette["text"],
++        font=("Helvetica", 18, "bold"),
++    )
++    style.configure(
++        "KpiLabel.TLabel",
++        background=palette["panel_alt"],
++        foreground=palette["muted"],
++        font=("Helvetica", 9, "bold"),
++    )
++    style.configure(
+         "Status.TLabel",
+         background=palette["bg"],
+         foreground=palette["muted"],
+@@ -1665,11 +1690,11 @@
+     style.configure(
+         "Primary.TButton",
+         background=palette["accent"],
+-        foreground="#04111d",
++        foreground="#08111d",
+         borderwidth=0,
+         focusthickness=0,
+         focuscolor=palette["accent"],
+-        padding=(14, 8),
++        padding=(14, 9),
+         font=("Helvetica", 10, "bold"),
+     )
+     style.map(
+@@ -1678,16 +1703,16 @@
+     )
+     style.configure(
+         "Secondary.TButton",
+-        background=palette["panel"],
++        background=palette["panel_alt"],
+         foreground=palette["text"],
+         borderwidth=1,
+         relief="solid",
+-        padding=(12, 8),
++        padding=(12, 9),
+         font=("Helvetica", 10, "bold"),
+     )
+     style.map(
+         "Secondary.TButton",
+-        background=[("active", palette["panel_alt"]), ("pressed", palette["panel_alt"])],
++        background=[("active", palette["panel_hover"]), ("pressed", palette["panel_hover"])],
+     )
+     style.configure(
+         "App.Vertical.TScrollbar",
+@@ -1710,16 +1735,18 @@
+     )
+ 
+     root.columnconfigure(0, weight=1)
+-    root.rowconfigure(1, weight=1)
++    root.rowconfigure(2, weight=1)
+ 
+-    header = ttk.Frame(root, style="Header.TFrame", padding=(20, 18, 20, 8))
++    header = ttk.Frame(root, style="Header.TFrame", padding=(20, 16, 20, 10))
+     header.grid(row=0, column=0, sticky="ew")
+     header.columnconfigure(0, weight=1)
+ 
+     ttk.Label(header, text="PC Speed Test Dashboard", style="Title.TLabel").grid(
+         row=0, column=0, sticky="w"
+     )
+-    subtitle_var = tk.StringVar(value="Grouped hardware panels with live refresh and benchmark.")
++    subtitle_var = tk.StringVar(
++        value="Live system overview, benchmark insights, and optimization suggestions."
++    )
+     ttk.Label(header, textvariable=subtitle_var, style="Subtitle.TLabel").grid(
+         row=1, column=0, sticky="w", pady=(4, 0)
+     )
+@@ -1727,8 +1754,29 @@
+     controls = ttk.Frame(header, style="Header.TFrame")
+     controls.grid(row=0, column=1, rowspan=2, sticky="e")
+ 
++    summary_bar = ttk.Frame(root, style="App.TFrame", padding=(20, 0, 20, 8))
++    summary_bar.grid(row=1, column=0, sticky="ew")
++    for i in range(4):
++        summary_bar.columnconfigure(i, weight=1)
++
++    cpu_kpi_var = tk.StringVar(value="--")
++    ram_kpi_var = tk.StringVar(value="--")
++    disk_kpi_var = tk.StringVar(value="--")
++    health_kpi_var = tk.StringVar(value="--")
++
++    def create_kpi(parent: ttk.Frame, col: int, label: str, value_var: tk.StringVar) -> None:
++        box = ttk.Frame(parent, style="Kpi.TFrame", padding=(16, 12))
++        box.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 8, 0))
++        ttk.Label(box, text=label, style="KpiLabel.TLabel").pack(anchor="w")
++        ttk.Label(box, textvariable=value_var, style="KpiValue.TLabel").pack(anchor="w", pady=(6, 0))
++
++    create_kpi(summary_bar, 0, "CPU", cpu_kpi_var)
++    create_kpi(summary_bar, 1, "Memory", ram_kpi_var)
++    create_kpi(summary_bar, 2, "Disk", disk_kpi_var)
++    create_kpi(summary_bar, 3, "Health Score", health_kpi_var)
++
+     viewport = ttk.Frame(root, style="App.TFrame", padding=(20, 8, 20, 8))
+-    viewport.grid(row=1, column=0, sticky="nsew")
++    viewport.grid(row=2, column=0, sticky="nsew")
+     viewport.columnconfigure(0, weight=1)
+     viewport.rowconfigure(0, weight=1)
+ 
+@@ -1857,7 +1905,7 @@
+ 
+     status_var = tk.StringVar(value="Ready.")
+     ttk.Label(root, textvariable=status_var, style="Status.TLabel").grid(
+-        row=2, column=0, sticky="ew", padx=20, pady=(0, 16)
++        row=3, column=0, sticky="ew", padx=20, pady=(0, 16)
+     )
+ 
+     panel_frames: list[ttk.Frame] = []
+@@ -2001,6 +2049,13 @@
+                 wraplength=wraplength,
+             ).grid(row=row_index, column=1, sticky="nw", pady=4)
+ 
++    def usage_color(value: float) -> str:
++        if value >= 85:
++            return palette["danger"]
++        if value >= 65:
++            return palette["warning"]
++        return palette["success"]
++
+     def draw_meter(
+         canvas: tk.Canvas,
+         y: float,
+@@ -2137,9 +2192,9 @@
+         cpu_ratio = float(info.get("cpu", {}).get("usage_percent", 0.0)) / 100.0
+         mem_ratio = float(info.get("memory", {}).get("usage_percent", 0.0)) / 100.0 if "memory" in info else 0.0
+         disk_ratio = float(info.get("disk", {}).get("usage_percent", 0.0)) / 100.0
+-        draw_meter(chart, 36, "CPU Load", cpu_ratio, f"{cpu_ratio * 100:.1f}%", "#38bdf8")
+-        draw_meter(chart, 84, "Memory Use", mem_ratio, f"{mem_ratio * 100:.1f}%", "#22c55e")
+-        draw_meter(chart, 132, "Disk Use", disk_ratio, f"{disk_ratio * 100:.1f}%", "#f59e0b")
++        draw_meter(chart, 36, "CPU Load", cpu_ratio, f"{cpu_ratio * 100:.1f}%", usage_color(cpu_ratio * 100.0))
++        draw_meter(chart, 84, "Memory Use", mem_ratio, f"{mem_ratio * 100:.1f}%", usage_color(mem_ratio * 100.0))
++        draw_meter(chart, 132, "Disk Use", disk_ratio, f"{disk_ratio * 100:.1f}%", usage_color(disk_ratio * 100.0))
+ 
+         details = ttk.Frame(panel_body, style="Card.TFrame")
+         details.grid(row=0, column=1, sticky="nsew")
+@@ -2455,6 +2510,16 @@
+         benchmarks = Benchmarks(**payload["benchmarks"])
+         sections = build_sections(info, benchmarks)
+         memory = info.get("memory")
++        cpu_percent = float(info.get("cpu", {}).get("usage_percent", 0.0))
++        ram_percent = float(memory.get("usage_percent", 0.0)) if isinstance(memory, dict) else 0.0
++        disk_percent = float(info.get("disk", {}).get("usage_percent", 0.0))
++        health = info.get("health_check", {})
++        health_score = health.get("total_score", "--") if isinstance(health, dict) else "--"
++
++        cpu_kpi_var.set(f"{cpu_percent:.1f}%")
++        ram_kpi_var.set(f"{ram_percent:.1f}%")
++        disk_kpi_var.set(f"{disk_percent:.1f}%")
++        health_kpi_var.set(str(health_score))
+         if memory and "usage_percent" in memory:
+             memory_history.append(float(memory["usage_percent"]))
+             del memory_history[:-60]
+@@ -2463,13 +2528,14 @@
+             content.columnconfigure(column, weight=1 if column < column_count else 0)
+ 
+         for index, (title, rows) in enumerate(sections):
+-            panel = ttk.Frame(content, style="CardOuter.TFrame", padding=(14, 12))
++            column = index % column_count
++            panel = ttk.Frame(content, style="Card.TFrame", padding=(18, 16))
+             panel.grid(
+                 row=index // column_count,
+-                column=index % column_count,
++                column=column,
+                 sticky="nsew",
+-                padx=8,
+-                pady=8,
++                padx=(0, 14) if column == 0 else (14, 0),
++                pady=14,
+             )
+             content.rowconfigure(index // column_count, weight=1)
+             panel_frames.append(panel)
+@@ -2644,19 +2710,19 @@
+     ).grid(row=0, column=0, padx=(0, 10))
+     ttk.Button(
+         controls,
+-        text="Capture",
++        text="Screenshot",
+         style="Secondary.TButton",
+         command=capture_screenshot,
+     ).grid(row=0, column=1, padx=(0, 10))
+     ttk.Button(
+         controls,
+-        text="Export Report",
++        text="Export",
+         style="Secondary.TButton",
+         command=export_report_from_gui,
+     ).grid(row=0, column=2, padx=(0, 10))
+     ttk.Button(
+         controls,
+-        text="Open Monitor",
++        text="System Monitor",
+         style="Secondary.TButton",
+         command=lambda: status_var.set(
+             "Opened system monitor." if open_system_monitor() else "Could not open system monitor."
